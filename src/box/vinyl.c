@@ -557,7 +557,7 @@ vinyl_engine_check_space_def(struct space_def *def)
 
 static struct space *
 vinyl_engine_create_space(struct engine *engine, struct space_def *def,
-			  struct rlist *key_list)
+			  struct rlist *key_list, uint64_t epoch)
 {
 	struct space *space = malloc(sizeof(*space));
 	if (space == NULL) {
@@ -589,6 +589,7 @@ vinyl_engine_create_space(struct engine *engine, struct space_def *def,
 		return NULL;
 	}
 	format->exact_field_count = def->exact_field_count;
+	format->epoch = ++epoch;
 	tuple_format_ref(format);
 
 	if (space_create(space, engine, &vinyl_space_vtab,

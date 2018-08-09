@@ -135,7 +135,7 @@ blackhole_engine_shutdown(struct engine *engine)
 
 static struct space *
 blackhole_engine_create_space(struct engine *engine, struct space_def *def,
-			      struct rlist *key_list)
+			      struct rlist *key_list, uint64_t epoch)
 {
 	if (!rlist_empty(key_list)) {
 		diag_set(ClientError, ER_UNSUPPORTED, "Blackhole", "indexes");
@@ -158,6 +158,7 @@ blackhole_engine_create_space(struct engine *engine, struct space_def *def,
 		return NULL;
 	}
 	format->exact_field_count = def->exact_field_count;
+	format->epoch = ++epoch;
 	tuple_format_ref(format);
 
 	if (space_create(space, engine, &blackhole_space_vtab,

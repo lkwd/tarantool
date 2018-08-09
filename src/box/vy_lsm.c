@@ -158,6 +158,7 @@ vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
 						    NULL);
 		if (lsm->disk_format == NULL)
 			goto fail_format;
+		lsm->disk_format->epoch = format->epoch;
 	}
 	tuple_format_ref(lsm->disk_format);
 
@@ -166,6 +167,7 @@ vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
 			vy_tuple_format_new_with_colmask(format);
 		if (lsm->mem_format_with_colmask == NULL)
 			goto fail_mem_format_with_colmask;
+		lsm->mem_format_with_colmask->epoch = format->epoch;
 	} else {
 		lsm->mem_format_with_colmask = pk->mem_format_with_colmask;
 	}

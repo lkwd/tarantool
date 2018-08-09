@@ -208,14 +208,14 @@ box_key_def_delete(box_key_def_t *key_def)
 
 int
 box_tuple_compare(const box_tuple_t *tuple_a, const box_tuple_t *tuple_b,
-		  const box_key_def_t *key_def)
+		  box_key_def_t *key_def)
 {
 	return tuple_compare(tuple_a, tuple_b, key_def);
 }
 
 int
 box_tuple_compare_with_key(const box_tuple_t *tuple_a, const char *key_b,
-			   const box_key_def_t *key_def)
+			   box_key_def_t *key_def)
 {
 	uint32_t part_count = mp_decode_array(&key_b);
 	return tuple_compare_with_key(tuple_a, key_b, part_count, key_def);
@@ -258,6 +258,8 @@ key_def_set_part(struct key_def *def, uint32_t part_no, uint32_t fieldno,
 	def->parts[part_no].type = type;
 	def->parts[part_no].coll = coll;
 	def->parts[part_no].coll_id = coll_id;
+	def->parts[part_no].offset_slot = TUPLE_OFFSET_SLOT_NIL;
+	def->parts[part_no].offset_slot_epoch = 0;
 	column_mask_set_fieldno(&def->column_mask, fieldno);
 	/**
 	 * When all parts are set, initialize the tuple
@@ -556,8 +558,11 @@ key_def_merge(const struct key_def *first, const struct key_def *second)
 	part = first->parts;
 	end = part + first->part_count;
 	for (; part != end; part++) {
-		key_def_set_part(new_def, pos++, part->fieldno, part->type,
+		key_def_set_part(new_def, pos, part->fieldno, part->type,
 				 part->is_nullable, part->coll, part->coll_id);
+		new_def->parts[pos].offset_slot_epoch = part->offset_slot_epoch;
+		new_def->parts[pos].offset_slot = part->offset_slot;
+		pos++;
 	}
 
 	/* Set-append second key def's part to the new key def. */
@@ -566,8 +571,11 @@ key_def_merge(const struct key_def *first, const struct key_def *second)
 	for (; part != end; part++) {
 		if (key_def_find(first, part->fieldno))
 			continue;
-		key_def_set_part(new_def, pos++, part->fieldno, part->type,
+		key_def_set_part(new_def, pos, part->fieldno, part->type,
 				 part->is_nullable, part->coll, part->coll_id);
+		new_def->parts[pos].offset_slot_epoch = part->offset_slot_epoch;
+		new_def->parts[pos].offset_slot = part->offset_slot;
+		pos++;
 	}
 	return new_def;
 }

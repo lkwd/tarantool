@@ -884,7 +884,7 @@ static const struct space_vtab memtx_space_vtab = {
 
 struct space *
 memtx_space_new(struct memtx_engine *memtx,
-		struct space_def *def, struct rlist *key_list)
+		struct space_def *def, struct rlist *key_list, uint64_t epoch)
 {
 	struct memtx_space *memtx_space = malloc(sizeof(*memtx_space));
 	if (memtx_space == NULL) {
@@ -918,6 +918,7 @@ memtx_space_new(struct memtx_engine *memtx,
 	format->engine = memtx;
 	format->is_temporary = def->opts.is_temporary;
 	format->exact_field_count = def->exact_field_count;
+	format->epoch = ++epoch;
 	tuple_format_ref(format);
 
 	if (space_create((struct space *)memtx_space, (struct engine *)memtx,
