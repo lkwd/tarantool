@@ -302,6 +302,8 @@ void sqlite3Coverage(int);
  */
 #define IS_BIG_INT(X)  (((X)&~(i64)0xffffffff)!=0)
 
+#define SQLITE_LIKE_DOESNT_MATCH_BLOBS
+
 #include "hash.h"
 #include "parse.h"
 #include <stdio.h>
@@ -1481,6 +1483,7 @@ typedef struct Token Token;
 typedef struct TreeView TreeView;
 typedef struct TriggerPrg TriggerPrg;
 typedef struct TriggerStep TriggerStep;
+typedef struct TypeDef TypeDef;
 typedef struct UnpackedRecord UnpackedRecord;
 typedef struct Walker Walker;
 typedef struct WhereInfo WhereInfo;
@@ -1696,6 +1699,24 @@ struct sqlite3 {
 #define SQLITE_MAGIC_BUSY     0xf03b7906	/* Database currently in use */
 #define SQLITE_MAGIC_ERROR    0xb5357930	/* An SQLITE_MISUSE error occurred */
 #define SQLITE_MAGIC_ZOMBIE   0x64cffc7f	/* Close with last statement close */
+
+struct numeric_type_def {
+	long size;
+	long precision;
+	bool positive;
+};
+
+struct string_type_def {
+	long length;
+};
+
+struct TypeDef {
+	enum affinity_type type;
+	union {
+		struct numeric_type_def n;
+		struct string_type_def s;
+	};
+};
 
 /*
  * Each SQL function is defined by an instance of the following
@@ -3465,7 +3486,7 @@ void sqlite3SelectAddColumnTypeAndCollation(Parse *, Table *, Select *);
 Table *sqlite3ResultSetOfSelect(Parse *, Select *);
 Index *sqlite3PrimaryKeyIndex(Table *);
 void sqlite3StartTable(Parse *, Token *, int);
-void sqlite3AddColumn(Parse *, Token *, Token *);
+void sqlite3AddColumn(Parse *, Token *, TypeDef *);
 
 /**
  * This routine is called by the parser while in the middle of
@@ -4278,6 +4299,8 @@ VList *sqlite3VListAdd(sqlite3 *, VList *, const char *, int, int);
 const char *sqlite3VListNumToName(VList *, int);
 int sqlite3VListNameToNum(VList *, const char *, int);
 
+int sqlite3TokenToLong(Token *, long *);
+
 /*
  * Routines to read and write variable-length integers.  These used to
  * be defined locally, but now we use the varint routines in the util.c
@@ -4771,7 +4794,7 @@ void sqlite3EndBenignMalloc(void);
 #define IN_INDEX_NOOP_OK     0x0001	/* OK to return IN_INDEX_NOOP */
 #define IN_INDEX_MEMBERSHIP  0x0002	/* IN operator used for membership test */
 #define IN_INDEX_LOOP        0x0004	/* IN operator used as a loop */
-int sqlite3FindInIndex(Parse *, Expr *, u32, int *, int *, int *);
+int sqlite3FindInIndex(Parse *, Expr *, u32, int *, int *, int *, struct Index **);
 
 void sqlite3ExprSetHeightAndFlags(Parse * pParse, Expr * p);
 #if SQLITE_MAX_EXPR_DEPTH>0

@@ -1251,35 +1251,6 @@ static const struct Enc *get_enc(void *buf)
 }
 
 /*
- * Convert SQLite affinity value to the corresponding Tarantool type
- * string which is suitable for _index.parts field.
- */
-static const char *convertSqliteAffinity(int affinity, bool allow_nulls)
-{
-	if (allow_nulls || 1) {
-		return "scalar";
-	}
-	switch (affinity) {
-	default:
-		assert(false);
-	case AFFINITY_BLOB:
-		return "scalar";
-	case AFFINITY_TEXT:
-		return "string";
-	case AFFINITY_NUMERIC:
-	case AFFINITY_REAL:
-	  /* Tarantool workaround: to make comparators able to compare, e.g.
-	     double and int use generic type. This might be a performance issue.  */
-	  /* return "number"; */
-		return "scalar";
-	case AFFINITY_INTEGER:
-	  /* See comment above.  */
-	  /* return "integer"; */
-		return "scalar";
-	}
-}
-
-/*
  * Render "format" array for _space entry.
  * Returns result size.
  * If buf==NULL estimate result size.
@@ -1291,23 +1262,12 @@ int tarantoolSqlite3MakeTableFormat(Table *pTable, void *buf)
 	const struct Enc *enc = get_enc(buf);
 	const struct space_def *def = pTable->def;
 	assert(def != NULL);
-	struct SqliteIndex *pk_idx = sqlite3PrimaryKeyIndex(pTable);
-	int pk_forced_int = -1;
 	char *base = buf, *p;
 	int i, n = def->field_count;
 
 	p = enc->encode_array(base, n);
 
-	/* If table's PK is single column which is INTEGER, then
-	 * treat it as strict type, not affinity.  */
-	if (pk_idx != NULL && pk_idx->def->key_def->part_count == 1) {
-		int pk = pk_idx->def->key_def->parts[0].fieldno;
-		if (def->fields[pk].type == FIELD_TYPE_INTEGER)
-			pk_forced_int = pk;
-	}
-
 	for (i = 0; i < n; i++) {
-		const char *t;
 		uint32_t cid = def->fields[i].coll_id;
 		struct field_def *field = &def->fields[i];
 		const char *default_str = field->default_value;
@@ -1320,18 +1280,10 @@ int tarantoolSqlite3MakeTableFormat(Table *pTable, void *buf)
 		p = enc->encode_str(p, "name", 4);
 		p = enc->encode_str(p, field->name, strlen(field->name));
 		p = enc->encode_str(p, "type", 4);
-		if (i == pk_forced_int) {
-			t = "integer";
-		} else {
-			enum affinity_type affinity = def->fields[i].affinity;
-			t = affinity == AFFINITY_BLOB ? "scalar" :
-			    convertSqliteAffinity(affinity,
-						  def->fields[i].is_nullable);
-		}
-
 		assert(def->fields[i].is_nullable ==
-			       action_is_nullable(def->fields[i].nullable_action));
-		p = enc->encode_str(p, t, strlen(t));
+		       action_is_nullable(def->fields[i].nullable_action));
+		p = enc->encode_str(p, field_type_strs[field->type],
+				    strlen(field_type_strs[field->type]));
 		p = enc->encode_str(p, "affinity", 8);
 		p = enc->encode_uint(p, def->fields[i].affinity);
 		p = enc->encode_str(p, "is_nullable", 11);
@@ -1426,17 +1378,6 @@ int tarantoolSqlite3MakeIdxParts(SqliteIndex *pIndex, void *buf)
 	struct key_def *key_def = pIndex->def->key_def;
 	const struct Enc *enc = get_enc(buf);
 	char *base = buf;
-	uint32_t pk_forced_int = UINT32_MAX;
-	struct SqliteIndex *primary_index =
-		sqlite3PrimaryKeyIndex(pIndex->pTable);
-
-	/* If table's PK is single column which is INTEGER, then
-	 * treat it as strict type, not affinity.  */
-	if (primary_index->def->key_def->part_count == 1) {
-		int pk = primary_index->def->key_def->parts[0].fieldno;
-		if (fields[pk].type == FIELD_TYPE_INTEGER)
-			pk_forced_int = pk;
-	}
 
 	/* gh-2187
 	 *
@@ -1450,18 +1391,12 @@ int tarantoolSqlite3MakeIdxParts(SqliteIndex *pIndex, void *buf)
 		uint32_t col = part->fieldno;
 		assert(fields[col].is_nullable ==
 		       action_is_nullable(fields[col].nullable_action));
-		const char *t;
-		if (pk_forced_int == col) {
-			t = "integer";
-		} else {
-			t = convertSqliteAffinity(fields[col].affinity,
-						  fields[col].is_nullable);
-		}
 		/* do not decode default collation */
 		uint32_t cid = part->coll_id;
 		p = enc->encode_map(p, cid == COLL_NONE ? 5 : 6);
 		p = enc->encode_str(p, "type", sizeof("type")-1);
-		p = enc->encode_str(p, t, strlen(t));
+		const char *type = field_type_strs[fields[col].type];
+		p = enc->encode_str(p, type, strlen(type));
 		p = enc->encode_str(p, "field", sizeof("field")-1);
 		p = enc->encode_uint(p, col);
 		if (cid != COLL_NONE) {
