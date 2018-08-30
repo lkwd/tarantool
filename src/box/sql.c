@@ -443,8 +443,7 @@ tarantoolSqlite3EphemeralCreate(BtCursor *pCur, uint32_t field_count,
 	pCur->space = ephemer_new_space;
 	pCur->index = *ephemer_new_space->index;
 
-	int unused;
-	return tarantoolSqlite3First(pCur, &unused);
+	return 0;
 }
 
 int tarantoolSqlite3EphemeralInsert(struct space *space, const char *tuple,
