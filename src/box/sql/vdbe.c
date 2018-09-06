@@ -4746,7 +4746,10 @@ case OP_DropTable: {
  * This is called after an index is dropped from Tarantool DD.
  */
 case OP_DropIndex: {
-	sql_space_index_delete(pOp->p4.space, pOp->p1);
+	if (sql_space_index_delete(pOp->p4.space, pOp->p1) != 0) {
+		rc = SQL_TARANTOOL_ERROR;
+		goto abort_due_to_error;
+	}
 	break;
 }
 

@@ -82,11 +82,6 @@ struct Keyword {
 #else
 #  define PRAGMA     0x00000400
 #endif
-#ifdef SQLITE_OMIT_REINDEX
-#  define REINDEX    0
-#else
-#  define REINDEX    0x00000800
-#endif
 #define SUBQUERY     0x00001000
 #  define TRIGGER    0x00002000
 #  define VIEW       0x00008000

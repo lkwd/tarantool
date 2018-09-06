@@ -207,7 +207,6 @@ fkey_encode_links(struct region *region, const struct fkey_def *def, int type,
 		  uint32_t *size);
 
 /**
-<<<<<<< HEAD
  * Encode index parts of given foreign key constraint into
  * MsgPack on @region.
  * @param region Region to use.

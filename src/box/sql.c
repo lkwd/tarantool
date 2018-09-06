@@ -1297,7 +1297,7 @@ sql_encode_table(struct region *region, struct Table *table, uint32_t *size)
 	 * If table's PK is single column which is INTEGER, then
 	 * treat it as strict type, not affinity.
 	 */
-	struct index *pk_idx = sql_table_primary_key(table);
+	struct index *pk_idx = space_index(table->space, 0);
 	uint32_t pk_forced_int = UINT32_MAX;
 	if (pk_idx != NULL && pk_idx->def->key_def->part_count == 1) {
 		int pk = pk_idx->def->key_def->parts[0].fieldno;
@@ -1659,21 +1659,30 @@ sql_ephemeral_table_new(Parse *parser, const char *name)
 	Table *table = sqlite3DbMallocZero(db, sizeof(Table));
 	if (table != NULL)
 		def = sql_ephemeral_space_def_new(parser, name);
-	if (def == NULL) {
-		sqlite3DbFree(db, table);
-		return NULL;
-	}
+	if (def == NULL)
+		goto err_def;
 	table->space = (struct space *) calloc(1, sizeof(struct space));
 	if (table->space == NULL) {
 		diag_set(OutOfMemory, sizeof(struct space), "calloc", "space");
-		parser->rc = SQL_TARANTOOL_ERROR;
-		parser->nErr++;
-		sqlite3DbFree(db, table);
-		return NULL;
+		goto err_space;
 	}
-
+	table->space->index_map =
+		(struct index **) calloc(1, sizeof(struct index *));
+	if (table->space->index_map == NULL) {
+		diag_set(OutOfMemory, sizeof(struct index *), "calloc",
+			 "table->space->index_map");
+		goto err_map;
+	}
 	table->def = def;
 	return table;
+err_map:
+	free(table->space);
+err_space:
+	parser->rc = SQL_TARANTOOL_ERROR;
+	parser->nErr++;
+err_def:
+	sqlite3DbFree(db, table);
+	return NULL;
 }
 
 int

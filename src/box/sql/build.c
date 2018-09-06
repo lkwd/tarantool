@@ -159,40 +159,52 @@ sqlite3LocateIndex(sqlite3 * db, const char *zName, const char *zTable)
 	return NULL;
 }
 
-void
+int
 sql_space_index_delete(struct space *space, uint32_t iid)
 {
 	assert(space != NULL);
+	struct index *to_delete = NULL;
+	uint32_t new_index_id_max = 0;
 	for (uint32_t i = 0; i < space->index_count; ++i) {
-		struct index *idx = space->index[i];
-		/*
-		 * Allocate new chunk with size reduced by 1 slot.
-		 * Copy all indexes to that chunk except for one
-		 * to be deleted.
-		 */
-		if (idx->def->iid == iid) {
-			index_def_delete(idx->def);
-			free(idx);
-			size_t idx_sz = sizeof(struct index *);
-			uint32_t idx_count = space->index_count - 1;
-			struct index **new_indexes =
-				(struct index **) malloc(idx_sz * idx_count);
-			if (new_indexes == NULL) {
-				diag_set(OutOfMemory, idx_sz * idx_count,
-					 "malloc", "new_indexes");
-				return;
-			}
-			memcpy(new_indexes, space->index, i * idx_sz);
-			memcpy(new_indexes + i, space->index + i + 1,
-			       idx_sz * (idx_count - i));
-			free(space->index);
-			space->index = new_indexes;
-			space->index_count--;
-			break;
-		}
+		if (space->index[i]->def->iid == iid)
+			to_delete = space->index[i];
+		else if (new_index_id_max < space->index[i]->def->iid)
+			new_index_id_max = space->index[i]->def->iid;
 	}
+	/*
+	 * Allocate new chunk with size reduced by 1 slot. Copy
+	 * all indexes to that chunk except for one to be deleted.
+	 */
+	assert(to_delete != NULL);
+	uint32_t new_index_count = space->index_count - 1;
+	uint32_t size = (new_index_count + new_index_id_max + 1) *
+			sizeof(struct index *);
+	struct index **new_index_map = (struct index **) malloc(size);
+	if (new_index_map == NULL) {
+		diag_set(OutOfMemory, size, "malloc", "new_index_map");
+		return -1;
+	}
+	/* Nullify gaps. */
+	memset(new_index_map, 0,
+	       sizeof(struct index *) * (new_index_id_max + 1));
+	struct index **new_indexes = new_index_map + new_index_id_max + 1;
+	for (uint32_t i = 0, j = 0; i < space->index_count; ++i) {
+		struct index *idx = space->index[i];
+		if (idx == to_delete)
+			continue;
+		new_index_map[idx->def->iid] = space->index_map[idx->def->iid];
+		new_indexes[j++] = idx;
+	}
+	index_def_delete(to_delete->def);
+	free(to_delete);
+	free(space->index_map);
+	space->index_map = new_index_map;
+	space->index = new_indexes;
+	space->index_count--;
+	space->index_id_max = new_index_id_max;
 	struct session *user_session = current_session();
 	user_session->sql_flags |= SQLITE_InternChanges;
+	return 0;
 }
 
 /*
@@ -266,16 +278,11 @@ table_delete(struct sqlite3 *db, struct Table *tab)
 		goto skip_index_delete;
 	/* Delete all indices associated with this table. */
 	for (uint32_t i = 0; i < tab->space->index_count; ++i) {
-		/*
-		 * These indexes are just wrapper for
-		 * index_def's, so it makes no sense to call
-		 * index_delete().
-		 */
 		struct index *idx = tab->space->index[i];
-		free(idx->def);
+		index_def_delete(idx->def);
 		free(idx);
 	}
-	free(tab->space->index);
+	free(tab->space->index_map);
 	free(tab->space);
 skip_index_delete:
 	assert(tab->def != NULL);
@@ -360,14 +367,6 @@ sqlite3CheckIdentifierName(Parse *pParse, char *zName)
 		return SQLITE_ERROR;
 	}
 	return SQLITE_OK;
-}
-
-struct index *
-sql_table_primary_key(const struct Table *tab)
-{
-	if (tab->space->index_count == 0 || tab->space->index[0]->def->iid != 0)
-		return NULL;
-	return tab->space->index[0];
 }
 
 /**
@@ -812,7 +811,7 @@ sqlite3AddPrimaryKey(Parse * pParse,	/* Parsing context */
 	int nTerm;
 	if (pTab == 0)
 		goto primary_key_exit;
-	if (sql_table_primary_key(pTab) != NULL) {
+	if (space_index(pTab->space, 0) != NULL) {
 		sqlite3ErrorMsg(pParse,
 				"table \"%s\" has more than one primary key",
 				pTab->def->name);
@@ -872,7 +871,7 @@ sqlite3AddPrimaryKey(Parse * pParse,	/* Parsing context */
 			goto primary_key_exit;
 	}
 
-	struct index *pk = sql_table_primary_key(pTab);
+	struct index *pk = space_index(pTab->space, 0);
 	assert(pk != NULL);
 	struct key_def *pk_key_def = pk->def->key_def;
 	for (uint32_t i = 0; i < pk_key_def->part_count; i++) {
@@ -1146,11 +1145,13 @@ getNewSpaceId(Parse * pParse)
  * @param idx_def Definition of index under construction.
  * @param pk_def Definition of primary key index.
  * @param space_id_reg Register containing generated space id.
+ * @param index_id_reg Register containing generated index id.
  */
 static void
 vdbe_emit_create_index(struct Parse *parse, struct space_def *def,
 		       const struct index_def *idx_def,
-		       const struct index_def *pk_def, int space_id_reg)
+		       const struct index_def *pk_def, int space_id_reg,
+		       int index_id_reg)
 {
 	struct Vdbe *v = sqlite3GetVdbe(parse);
 	int entry_reg = ++parse->nMem;
@@ -1187,10 +1188,11 @@ vdbe_emit_create_index(struct Parse *parse, struct space_def *def,
 	} else {
 		/*
 		 * An existing table is being modified;
-		 * space_id_reg is register, but iid is literal.
+		 * space_id_reg is literal, index_id_reg is
+		 * register.
 		 */
 		sqlite3VdbeAddOp2(v, OP_Integer, space_id_reg, entry_reg);
-		sqlite3VdbeAddOp2(v, OP_SCopy, idx_def->iid, entry_reg + 1);
+		sqlite3VdbeAddOp2(v, OP_SCopy, index_id_reg, entry_reg + 1);
 	}
 	sqlite3VdbeAddOp4(v, OP_String8, 0, entry_reg + 2, 0,
 			  sqlite3DbStrDup(parse->db, idx_def->name),
@@ -1612,7 +1614,7 @@ sqlite3EndTable(Parse * pParse,	/* Parse context */
 	}
 
 	if (!p->def->opts.is_view) {
-		if (sql_table_primary_key(p) == NULL) {
+		if (space_index(p->space, 0) == NULL) {
 			sqlite3ErrorMsg(pParse,
 					"PRIMARY KEY missing on table %s",
 					p->def->name);
@@ -1686,12 +1688,12 @@ sqlite3EndTable(Parse * pParse,	/* Parse context */
 	createSpace(pParse, reg_space_id, stmt);
 	/* Indexes aren't required for VIEW's.. */
 	if (!p->def->opts.is_view) {
-		struct index *pk = sql_table_primary_key(p);
+		struct index *pk = space_index(p->space, 0);
 		for (uint32_t i = 0; i < p->space->index_count; ++i) {
 			struct index *idx = p->space->index[i];
-			idx->def->iid = i;
 			vdbe_emit_create_index(pParse, p->def, idx->def,
-					       pk->def, reg_space_id);
+					       pk->def, reg_space_id,
+					       idx->def->iid);
 		}
 	}
 
@@ -1739,7 +1741,7 @@ sqlite3EndTable(Parse * pParse,	/* Parse context */
 			}
 			fk->parent_id = reg_space_id;
 		} else if (fk_parse->is_self_referenced) {
-			struct index *pk = sql_table_primary_key(p);
+			struct index *pk = space_index(p->space, 0);
 			if (pk->def->key_def->part_count != fk->field_count) {
 				diag_set(ClientError, ER_CREATE_FK_CONSTRAINT,
 					 fk->name, "number of columns in "\
@@ -2480,30 +2482,39 @@ getNewIid(Parse * pParse, int iSpaceId, int iCursor)
 
 /**
  * Add new index to table's indexes list.
- * We follow convention that PK comes first in list.
- *
- * @param index Index to be added to list.
  * @param tab Table to which belongs given index.
+ * @param index Index to be added to list.
  */
 static void
 table_add_index(struct Table *tab, struct index *index)
 {
-	uint32_t idx_count = tab->space->index_count;
-	size_t indexes_sz = sizeof(struct index *) * (idx_count + 1);
-	struct index **idx = (struct index **) realloc(tab->space->index,
-						       indexes_sz);
-	if (idx == NULL) {
-		diag_set(OutOfMemory, indexes_sz, "realloc", "idx");
+	struct space *space = tab->space;
+	uint32_t new_index_count = space->index_count + 1;
+	uint32_t new_index_id_max = MAX(space->index_id_max, index->def->iid);
+	uint32_t size =
+		(new_index_id_max + 1 + new_index_count) * sizeof(index);
+	struct index **new_index_map = (struct index **) malloc(size);
+	if (new_index_map == NULL) {
+		diag_set(OutOfMemory, size, "malloc", "new_index_map");
 		return;
 	}
-	tab->space->index = idx;
-	/* Make sure that PK always comes as first member. */
-	if (index->def->iid == 0 && idx_count != 0) {
-		struct index *tmp = tab->space->index[0];
-		tab->space->index[0] = index;
-		index = tmp;
-	}
-	tab->space->index[tab->space->index_count++] = index;
+	struct index **new_index = new_index_map + new_index_id_max + 1;
+	memcpy(new_index_map, space->index_map,
+	       sizeof(index) * (space->index_id_max + 1));
+	memcpy(new_index, space->index, sizeof(index) * space->index_count);
+	new_index_map[index->def->iid] = index;
+	/*
+	 * Make sure that PK always comes as first member in order
+	 * to prefer it among other indexes when possible.
+	 */
+	if (index->def->iid == 0 && space->index_count > 0)
+		SWAP(index, new_index[0]);
+	new_index[new_index_count - 1] = index;
+	free(space->index_map);
+	space->index_map = new_index_map;
+	space->index = new_index;
+	space->index_count = new_index_count;
+	space->index_id_max = new_index_id_max;
 }
 
 /**
@@ -2798,7 +2809,11 @@ sql_create_index(struct Parse *parse, struct Token *token,
 	 * (for the simplicity sake we set it to 1), but PK
 	 * still must have iid == 0.
 	 */
-	uint32_t iid = idx_type != SQL_INDEX_TYPE_CONSTRAINT_PK;
+	uint32_t iid;
+	if (idx_type != SQL_INDEX_TYPE_CONSTRAINT_PK)
+		iid = table->space->index_id_max + 1;
+	else
+		iid = 0;
 	if (index_fill_def(parse, index, table, iid, name, strlen(name),
 			   col_list, idx_type, sql_stmt) != 0)
 		goto exit_create_index;
@@ -2858,6 +2873,7 @@ sql_create_index(struct Parse *parse, struct Token *token,
 	if (table == parse->pNewTable) {
 		for (uint32_t i = 0; i < table->space->index_count; ++i) {
 			struct index *existing_idx = table->space->index[i];
+			uint32_t iid = existing_idx->def->iid;
 			struct key_def *key_def = index->def->key_def;
 			struct key_def *exst_key_def =
 				existing_idx->def->key_def;
@@ -2882,7 +2898,9 @@ sql_create_index(struct Parse *parse, struct Token *token,
 				constraint_is_named(existing_idx->def->name);
 			/* CREATE TABLE t(a, UNIQUE(a), PRIMARY KEY(a)). */
 			if (idx_type == SQL_INDEX_TYPE_CONSTRAINT_PK &&
-			    existing_idx->def->iid != 0 && !is_named) {
+			    iid != 0 && !is_named) {
+				table->space->index_map[0] = existing_idx;
+				table->space->index_map[iid] = NULL;
 				existing_idx->def->iid = 0;
 				goto exit_create_index;
 			}
@@ -2938,9 +2956,9 @@ sql_create_index(struct Parse *parse, struct Token *token,
 		space_id = table->def->id;
 		index_id = getNewIid(parse, space_id, cursor);
 		sqlite3VdbeAddOp1(vdbe, OP_Close, cursor);
-		struct index *pk = sql_table_primary_key(table);
+		struct index *pk = space_index(table->space, 0);
 		vdbe_emit_create_index(parse, table->def, index->def, pk->def,
-				       space_id);
+				       space_id, index_id);
 		/* Consumes sql_stmt. */
 		first_schema_col =
 			vdbe_emit_index_schema_record(parse, index->def->name,

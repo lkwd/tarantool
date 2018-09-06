@@ -1089,7 +1089,7 @@ valueNew(sqlite3 * db, struct ValueNewStat4Ctx *p)
 			uint32_t part_count = idx->key_def->part_count;
 
 			int nByte = sizeof(Mem) * part_count +
-				ROUND8(sizeof(UnpackedRecord));
+				    ROUND8(sizeof(UnpackedRecord));
 			pRec = (UnpackedRecord *) sqlite3DbMallocZero(db,
 								      nByte);
 			if (pRec == NULL)

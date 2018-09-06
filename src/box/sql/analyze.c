@@ -802,7 +802,14 @@ analyzeOneTable(Parse * pParse,	/* Parser context */
 		return;
 	}
 	assert(pTab->def->id != 0);
-	if (sqlite3_strlike("\\_%", pTab->def->name, '\\') == 0) {
+	/*
+	 * Here we need real space from Tarantool DD since
+	 * further it is passed to cursor opening routine.
+	 */
+	struct space *space = space_by_id(pTab->def->id);
+	assert(space != NULL);
+	const char *tab_name = space_name(space);
+	if (sqlite3_strlike("\\_%", tab_name, '\\') == 0) {
 		/* Do not gather statistics on system tables */
 		return;
 	}
@@ -816,15 +823,9 @@ analyzeOneTable(Parse * pParse,	/* Parser context */
 	iIdxCur = iTab++;
 	pParse->nTab = MAX(pParse->nTab, iTab);
 	sqlite3OpenTable(pParse, iTabCur, pTab, OP_OpenRead);
-	sqlite3VdbeLoadString(v, regTabname, pTab->def->name);
-	/*
-	 * Here we need real space from Tarantool DD since
-	 * further it is passed to cursor opening routine.
-	 */
-	struct space *space = space_by_id(pTab->def->id);
-	assert(space != NULL);
+	sqlite3VdbeLoadString(v, regTabname, tab_name);
 	for (uint32_t j = 0; j < space->index_count; ++j) {
-		struct index *idx = pTab->space->index[j];
+		struct index *idx = space->index[j];
 		int addrRewind;	/* Address of "OP_Rewind iIdxCur" */
 		int addrNextRow;	/* Address of "next_row:" */
 		const char *idx_name;	/* Name of the index */
@@ -834,15 +835,14 @@ analyzeOneTable(Parse * pParse,	/* Parser context */
 		 * instead more familiar table name.
 		 */
 		if (idx->def->iid == 0)
-			idx_name = pTab->def->name;
+			idx_name = tab_name;
 		else
 			idx_name = idx->def->name;
 		int part_count = idx->def->key_def->part_count;
 
 		/* Populate the register containing the index name. */
 		sqlite3VdbeLoadString(v, regIdxname, idx_name);
-		VdbeComment((v, "Analysis for %s.%s", pTab->def->name,
-			    idx_name));
+		VdbeComment((v, "Analysis for %s.%s", tab_name, idx_name));
 
 		/*
 		 * Pseudo-code for loop that calls stat_push():
@@ -986,7 +986,7 @@ analyzeOneTable(Parse * pParse,	/* Parser context */
 		 *   if !eof(csr) goto next_row;
 		 */
 		assert(regKey == (regStat4 + 2));
-		struct index *pk = sql_table_primary_key(pTab);
+		struct index *pk = space_index(space, 0);
 		int pk_part_count = pk->def->key_def->part_count;
 		/* Allocate memory for array. */
 		pParse->nMem = MAX(pParse->nMem,
@@ -994,10 +994,10 @@ analyzeOneTable(Parse * pParse,	/* Parser context */
 		int regKeyStat = regPrev + part_count;
 		for (i = 0; i < pk_part_count; i++) {
 			uint32_t k = pk->def->key_def->parts[i].fieldno;
-			assert(k < pTab->def->field_count);
+			assert(k < space->def->field_count);
 			sqlite3VdbeAddOp3(v, OP_Column, iIdxCur, k,
 					  regKeyStat + i);
-			VdbeComment((v, "%s", pTab->def->fields[k].name));
+			VdbeComment((v, "%s", space->def->fields[k].name));
 		}
 		sqlite3VdbeAddOp3(v, OP_MakeRecord, regKeyStat,
 				  pk_part_count, regKey);

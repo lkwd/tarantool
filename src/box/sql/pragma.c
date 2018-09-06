@@ -443,7 +443,7 @@ sqlite3Pragma(Parse * pParse, Token * pId,	/* First part of [schema.]id field */
 			break;
 		struct space *space = space_cache_find(table->def->id);
 		struct space_def *def = space->def;
-		struct index *pk = sql_table_primary_key(table);
+		struct index *pk = space_index(space, 0);
 		pParse->nMem = 6;
 		if (def->opts.is_view) {
 			const char *sql = table->def->opts.sql;

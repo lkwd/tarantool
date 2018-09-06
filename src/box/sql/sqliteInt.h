@@ -3343,12 +3343,6 @@ int sqlite3ColumnsFromExprList(Parse *parse, ExprList *expr_list, Table *table);
 void sqlite3SelectAddColumnTypeAndCollation(Parse *, Table *, Select *);
 Table *sqlite3ResultSetOfSelect(Parse *, Select *);
 
-/**
- * Return the PRIMARY KEY index of a table.
- */
-struct index *
-sql_table_primary_key(const struct Table *tab);
-
 void sqlite3StartTable(Parse *, Token *, int);
 void sqlite3AddColumn(Parse *, Token *, Token *);
 
@@ -3667,8 +3661,11 @@ void sqlite3UnlinkAndDeleteTable(sqlite3 *, const char *);
  *
  * @param space Space which index belongs to.
  * @param iid Id of index to be deleted.
+ *
+ * @retval 0 Success.
+ * @retval -1 Error.
  */
-void
+int
 sql_space_index_delete(struct space *space, uint32_t iid);
 
 char *sqlite3NameFromToken(sqlite3 *, Token *);
