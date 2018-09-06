@@ -64,6 +64,8 @@ ffi.cdef[[
                     const char *key, const char *key_end);
     /** \endcond public */
     /** \cond public */
+    bool
+    box_txn();
     int64_t
     box_txn_id();
     int
@@ -319,6 +321,10 @@ box.begin = function()
     if builtin.box_txn_begin() == -1 then
         box.error()
     end
+end
+
+box.is_in_txn = function()
+    return { builtin.box_txn() }
 end
 
 box.savepoint = function()
