@@ -41,6 +41,7 @@
  */
 #include "box/box.h"
 #include "box/fkey.h"
+#include "box/tuple_format.h"
 #include "box/txn.h"
 #include "box/session.h"
 #include "sqliteInt.h"
@@ -3068,7 +3069,7 @@ case OP_TTransaction: {
  *
  * The CursorReopen opcode may only be used with P5 == 0.
  */
-/* Opcode: CursorOpen P1 P2 * P4 P5
+/* Opcode: CursorOpen P1 P2 P3 P4 P5
  * Synopsis: index id = P2, space ptr = P4
  *
  * Open a cursor for a space specified by pointer in P4 and index
@@ -3094,12 +3095,19 @@ case OP_CursorOpen:
 				    "need to re-compile SQL statement");
 		goto abort_due_to_error;
 	}
-	struct space *space = pOp->p4.space;
+	struct space *space;
+	if (pOp->p3 > 0) {
+		space = (struct space *)aMem[pOp->p3].u.p;
+	} else {
+		assert(pOp->p4type == P4_SPACEPTR);
+		space = pOp->p4.space;
+	}
+
 	assert(space != NULL);
 	struct index *index = space_index(space, pOp->p2);
 	assert(index != NULL);
 	assert(pOp->p1 >= 0);
-	cur = allocateCursor(p, pOp->p1, space->def->field_count,
+	cur = allocateCursor(p, pOp->p1, space->format->field_count,
 			     CURTYPE_TARANTOOL);
 	if (cur == NULL)
 		goto no_mem;
@@ -3147,6 +3155,31 @@ case OP_OpenTEphemeral: {
 					     pOp->p4.key_def);
 	pCx->key_def = pCx->uc.pCursor->index->def->key_def;
 	if (rc) goto abort_due_to_error;
+	break;
+}
+
+/**
+ * Opcode: OpenTEphemeral2 P1 P2 * P4 *
+ * Synopsis:
+ * @param P1 number of columns in a new table.
+ * @param P2 Output, register to store new space ptr.
+ * @param P4 key def for new table, NULL is allowed.
+ *
+ * This opcode creates Tarantool's ephemeral table and returns
+ * it's pointer in P2.
+ */
+case OP_OpenTEphemeral2: {  /* out2 */
+	assert(pOp->p1 > 0);
+	assert(pOp->p2 > 0);
+	assert(pOp->p4type != P4_KEYDEF || pOp->p4.key_def != NULL);
+	struct space *space = NULL;
+
+	rc = tarantoolSqlite3EphemeralCreate2(&space, pOp->p1, pOp->p4.key_def);
+	if (rc != 0)
+		goto abort_due_to_error;
+	struct Mem *op = &aMem[pOp->p2];
+	op->u.p = space;
+	op->flags = MEM_Ptr;
 	break;
 }
 
@@ -4296,6 +4329,50 @@ case OP_IdxInsert: {        /* in2 */
 	assert(p->errorAction == ON_CONFLICT_ACTION_ABORT ||
 	       p->errorAction == ON_CONFLICT_ACTION_FAIL);
 	if (rc) goto abort_due_to_error;
+	break;
+}
+
+/* Opcode: IdxInsert2 P1 P2 * * P5
+ * Synopsis: key=r[P2]
+ *
+ * @param P1 Register containing space pointer.
+ * @param P2 Register with MessagePack data to insert.
+ * @param P5 Flags. If P5 contains OPFLAG_NCHANGE, then VDBE
+ *        accounts the change in a case of successful insertion in
+ *        nChange counter.
+ *
+ * For ephemeral spaces only (so far).
+ */
+case OP_IdxInsert2: {        /* in2 */
+	pIn1 = &aMem[pOp->p1];
+	assert(pIn1->flags & MEM_Ptr);
+	pIn2 = &aMem[pOp->p2];
+	assert(pIn2->flags & MEM_Blob);
+	if (pOp->p5 & OPFLAG_NCHANGE) p->nChange++;
+	rc = ExpandBlob(pIn2);
+	if (rc != 0)
+		goto abort_due_to_error;
+
+	struct space *space = (struct space *)pIn1->u.p;
+	assert(space->def->id == 0);
+	rc = tarantoolSqlite3EphemeralInsert(space,
+					     pIn2->z,
+					     pIn2->z + pIn2->n);
+
+	if (pOp->p5 & OPFLAG_OE_IGNORE) {
+		/* Ignore any kind of failes and do not raise error message */
+		rc = 0;
+		/* If we are in trigger, increment ignore raised counter */
+		if (p->pFrame != NULL)
+			p->ignoreRaised++;
+	} else if (pOp->p5 & OPFLAG_OE_FAIL) {
+		p->errorAction = ON_CONFLICT_ACTION_FAIL;
+	}
+
+	assert(p->errorAction == ON_CONFLICT_ACTION_ABORT ||
+	       p->errorAction == ON_CONFLICT_ACTION_FAIL);
+	if (rc != 0)
+		goto abort_due_to_error;
 	break;
 }
 

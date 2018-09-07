@@ -446,6 +446,74 @@ tarantoolSqlite3EphemeralCreate(BtCursor *pCur, uint32_t field_count,
 	return 0;
 }
 
+/**
+ * Create ephemeral space and set cursor to the first entry. Features of
+ * ephemeral spaces: id == 0, name == "ephemeral", memtx engine (in future it
+ * can be changed, but now only memtx engine is supported), primary index
+ * which covers all fields and no secondary indexes, given field number and
+ * collation sequence. All fields are scalar and nullable.
+ *
+ * @param[out] space Pointer to pointer to store new space's ponter.
+ * @param field_count Number of fields in ephemeral space.
+ * @param def Keys description for new ephemeral space.
+ *
+ * @retval 0 on success, 1 otherwise.
+ */
+int
+tarantoolSqlite3EphemeralCreate2(struct space **space, uint32_t field_count,
+				 struct key_def *def)
+{
+	struct key_def *ephemer_key_def = key_def_new(field_count);
+	if (ephemer_key_def == NULL)
+		return SQL_TARANTOOL_ERROR;
+	for (uint32_t part = 0; part < field_count; ++part) {
+		struct coll *coll;
+		uint32_t id;
+		if (def != NULL && part < def->part_count) {
+			coll = def->parts[part].coll;
+			id = def->parts[part].coll_id;
+		} else {
+			coll = NULL;
+			id = COLL_NONE;
+		}
+		key_def_set_part(ephemer_key_def, part, part, FIELD_TYPE_SCALAR,
+				 ON_CONFLICT_ACTION_NONE, coll, id,
+				 SORT_ORDER_ASC);
+	}
+
+	struct index_def *ephemer_index_def =
+		index_def_new(0, 0, "ephemer_idx", strlen("ephemer_idx"), TREE,
+			      &index_opts_default, ephemer_key_def, NULL);
+	key_def_delete(ephemer_key_def);
+	if (ephemer_index_def == NULL)
+		return SQL_TARANTOOL_ERROR;
+
+	struct rlist key_list;
+	rlist_create(&key_list);
+	rlist_add_entry(&key_list, ephemer_index_def, link);
+
+	struct space_def *ephemer_space_def =
+		space_def_new(0 /* space id */, 0 /* user id */, field_count,
+			      "ephemeral", strlen("ephemeral"),
+			      "memtx", strlen("memtx"),
+			      &space_opts_default, &field_def_default,
+			      0 /* length of field_def */);
+	if (ephemer_space_def == NULL) {
+		index_def_delete(ephemer_index_def);
+		return 1;
+	}
+
+	struct space *ephemer_new_space = space_new_ephemeral(ephemer_space_def,
+							      &key_list);
+	index_def_delete(ephemer_index_def);
+	space_def_delete(ephemer_space_def);
+	if (ephemer_new_space == NULL)
+		return 1;
+
+	*space = ephemer_new_space;
+	return 0;
+}
+
 int tarantoolSqlite3EphemeralInsert(struct space *space, const char *tuple,
 				    const char *tuple_end)
 {

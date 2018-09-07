@@ -256,6 +256,7 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 		 * it, so columns should be loaded manually.
 		 */
 		struct key_def *pk_def = NULL;
+		int reg_ptr_eph = ++parse->nMem;
 		int reg_pk = parse->nMem + 1;
 		int pk_len;
 		int eph_cursor = parse->nTab++;
@@ -263,8 +264,8 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 		if (is_view) {
 			pk_len = table->def->field_count;
 			parse->nMem += pk_len;
-			sqlite3VdbeAddOp2(v, OP_OpenTEphemeral,
-					  eph_cursor, pk_len);
+			sqlite3VdbeAddOp2(v, OP_OpenTEphemeral2,
+					  pk_len, reg_ptr_eph);
 		} else {
                         assert(space->index_count > 0);
                         pk_def = key_def_dup(space->index[0]->def->key_def);
@@ -274,8 +275,8 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
                         }
                         pk_len = pk_def->part_count;
                         parse->nMem += pk_len;
-                        sqlite3VdbeAddOp4(v, OP_OpenTEphemeral, eph_cursor,
-                                          pk_len, 0,
+                        sqlite3VdbeAddOp4(v, OP_OpenTEphemeral2,
+                                          pk_len, reg_ptr_eph, 0,
                                           (char *)pk_def, P4_KEYDEF);
 		}
 
@@ -359,7 +360,7 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 			 * by malloc.
 			 */
 			sqlite3VdbeChangeP5(v, 1);
-			sqlite3VdbeAddOp2(v, OP_IdxInsert, eph_cursor, reg_key);
+			sqlite3VdbeAddOp2(v, OP_IdxInsert2, reg_ptr_eph, reg_key);
 		}
 
 		/* If this DELETE cannot use the ONEPASS strategy,
@@ -404,6 +405,8 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 
 			VdbeCoverage(v);
 		} else {
+			sqlite3VdbeAddOp4(v, OP_CursorOpen, eph_cursor, 0,
+					  reg_ptr_eph, NULL, P4_NOTUSED);
 			addr_loop = sqlite3VdbeAddOp1(v, OP_Rewind, eph_cursor);
 			VdbeCoverage(v);
 			sqlite3VdbeAddOp2(v, OP_RowData, eph_cursor, reg_key);

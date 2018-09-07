@@ -198,6 +198,11 @@ vdbe_has_table_read(struct Parse *parser, const struct Table *table)
 		struct VdbeOp *op = sqlite3VdbeGetOp(v, i);
 		assert(op != NULL);
 		if (op->opcode == OP_CursorOpen) {
+			/* No sense to check ephemral openiungs. */
+			if (op->p3 > 0) {
+				assert(op->p4.space == NULL);
+				continue;
+			}
 			assert(op->p4type == P4_SPACEPTR);
 			struct space *space = op->p4.space;
 			if (space->def->id == table->def->id)
@@ -349,6 +354,7 @@ sqlite3Insert(Parse * pParse,	/* Parser context */
 	/* List of triggers on pTab, if required. */
 	struct sql_trigger *trigger;
 	int tmask;		/* Mask of trigger times */
+	int reg_eph_ptr;
 
 	db = pParse->db;
 	memset(&dest, 0, sizeof(dest));
@@ -537,11 +543,13 @@ sqlite3Insert(Parse * pParse,	/* Parser context */
 			int addrL;	/* Label "L" */
 			int64_t initial_pk = 0;
 
+			reg_eph_ptr = ++pParse->nMem;
+
 			srcTab = pParse->nTab++;
 			regRec = sqlite3GetTempReg(pParse);
 			regCopy = sqlite3GetTempRange(pParse, nColumn);
 			regTempId = sqlite3GetTempReg(pParse);
-			sqlite3VdbeAddOp2(v, OP_OpenTEphemeral, srcTab, nColumn+1);
+			sqlite3VdbeAddOp2(v, OP_OpenTEphemeral2, nColumn+1, reg_eph_ptr);
 			/* Create counter for rowid */
 			sqlite3VdbeAddOp4Dup8(v, OP_Int64,
 					      0 /* unused */,
@@ -557,7 +565,7 @@ sqlite3Insert(Parse * pParse,	/* Parser context */
 					  nColumn + 1, regRec);
 			/* Set flag to save memory allocating one by malloc. */
 			sqlite3VdbeChangeP5(v, 1);
-			sqlite3VdbeAddOp2(v, OP_IdxInsert, srcTab, regRec);
+			sqlite3VdbeAddOp2(v, OP_IdxInsert2, reg_eph_ptr, regRec);
 
 			sqlite3VdbeGoto(v, addrL);
 			sqlite3VdbeJumpHere(v, addrL);
@@ -634,6 +642,7 @@ sqlite3Insert(Parse * pParse,	/* Parser context */
 		 *         end loop
 		 *      D: ...
 		 */
+		sqlite3VdbeAddOp4(v, OP_CursorOpen, srcTab, 0, reg_eph_ptr, NULL, P4_NOTUSED);
 		addrInsTop = sqlite3VdbeAddOp1(v, OP_Rewind, srcTab);
 		VdbeCoverage(v);
 		addrCont = sqlite3VdbeCurrentAddr(v);

@@ -110,6 +110,9 @@ int tarantoolSqlite3RenameTrigger(const char *zTriggerName,
 /* Interface for ephemeral tables. */
 int tarantoolSqlite3EphemeralCreate(BtCursor * pCur, uint32_t filed_count,
 				    struct key_def *def);
+/* Interface for ephemeral tables. */
+int tarantoolSqlite3EphemeralCreate2(struct space **space, uint32_t filed_count,
+				    struct key_def *def);
 /**
  * Insert tuple into ephemeral space.
  * In contrast to ordinary spaces, there is no need to create and

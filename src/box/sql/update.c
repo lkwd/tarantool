@@ -113,6 +113,7 @@ sqlite3Update(Parse * pParse,		/* The parser context */
 	int iEph = 0;		/* Ephemeral table holding all primary key values */
 	int nKey = 0;		/* Number of elements in regKey */
 	int aiCurOnePass[2];	/* The write cursors opened by WHERE_ONEPASS */
+	int reg_eph_ptr = 0;
 
 	/* Register Allocations */
 	int regRowCount = 0;	/* A count of rows changed */
@@ -312,14 +313,15 @@ sqlite3Update(Parse * pParse,		/* The parser context */
 	pParse->nMem += pk_part_count;
 	regKey = ++pParse->nMem;
 	iEph = pParse->nTab++;
+	reg_eph_ptr = ++pParse->nMem;
 	sqlite3VdbeAddOp2(v, OP_Null, 0, iPk);
 
 	if (is_view) {
-		addrOpen = sqlite3VdbeAddOp2(v, OP_OpenTEphemeral, iEph,
-					     nKey);
+		addrOpen = sqlite3VdbeAddOp2(v, OP_OpenTEphemeral2, nKey,
+					     reg_eph_ptr);
 	} else {
-		addrOpen = sqlite3VdbeAddOp2(v, OP_OpenTEphemeral, iEph,
-					     pk_part_count);
+		addrOpen = sqlite3VdbeAddOp2(v, OP_OpenTEphemeral2,
+					     pk_part_count, reg_eph_ptr);
 		sql_vdbe_set_p4_key_def(pParse, pPk);
 	}
 
@@ -350,7 +352,7 @@ sqlite3Update(Parse * pParse,		/* The parser context */
 				   sqlite3IndexAffinityStr(pParse->db, pPk);
 		sqlite3VdbeAddOp4(v, OP_MakeRecord, iPk, pk_part_count,
 				  regKey, zAff, pk_part_count);
-		sqlite3VdbeAddOp2(v, OP_IdxInsert, iEph, regKey);
+		sqlite3VdbeAddOp2(v, OP_IdxInsert2, reg_eph_ptr, regKey);
 		/* Set flag to save memory allocating one by malloc. */
 		sqlite3VdbeChangeP5(v, 1);
 	}
@@ -410,6 +412,7 @@ sqlite3Update(Parse * pParse,		/* The parser context */
 		VdbeCoverageIf(v, pPk != 0);
 	} else {
 		labelContinue = sqlite3VdbeMakeLabel(v);
+		sqlite3VdbeAddOp4(v, OP_CursorOpen, iEph, 0, reg_eph_ptr, NULL, P4_NOTUSED);
 		sqlite3VdbeAddOp2(v, OP_Rewind, iEph, labelBreak);
 		VdbeCoverage(v);
 		addrTop = sqlite3VdbeAddOp2(v, OP_RowData, iEph, regKey);
