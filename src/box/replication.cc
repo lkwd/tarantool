@@ -262,6 +262,21 @@ replica_on_applier_sync(struct replica *replica)
 }
 
 static void
+replica_on_applier_off(struct replica *replica)
+{
+	switch (replica->applier_sync_state) {
+	case APPLIER_CONNECTED:
+		replica_on_applier_sync(replica);
+		break;
+	case APPLIER_DISCONNECTED:
+		break;
+	default:
+		unreachable();
+	}
+
+}
+
+static void
 replica_on_applier_connect(struct replica *replica)
 {
 	struct applier *applier = replica->applier;
@@ -396,9 +411,10 @@ replica_on_applier_state_f(struct trigger *trigger, void *event)
 		/*
 		 * Connection to self, duplicate connection
 		 * to the same master, or the applier fiber
-		 * has been cancelled. Assume synced.
+		 * has been cancelled. In case of duplicated connection
+		 * will be left in this state, otherwise assume synced.
 		 */
-		replica_on_applier_sync(replica);
+		replica_on_applier_off(replica);
 		break;
 	case APPLIER_STOPPED:
 		/* Unrecoverable error. */
@@ -427,6 +443,7 @@ replicaset_update(struct applier **appliers, int count)
 	auto uniq_guard = make_scoped_guard([&]{
 		replica_hash_foreach_safe(&uniq, replica, next) {
 			replica_hash_remove(&uniq, replica);
+			replica_clear_applier(replica);
 			replica_delete(replica);
 		}
 	});

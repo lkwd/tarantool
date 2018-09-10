@@ -667,8 +667,10 @@ box_sync_replication(bool connect_quorum)
 		diag_raise();
 
 	auto guard = make_scoped_guard([=]{
-		for (int i = 0; i < count; i++)
+		for (int i = 0; i < count; i++) {
+			applier_stop(appliers[i]);
 			applier_delete(appliers[i]); /* doesn't affect diag */
+		}
 	});
 
 	replicaset_connect(appliers, count, connect_quorum);

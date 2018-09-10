@@ -1,0 +1,37 @@
+test_run = require('test_run').new()
+---
+...
+engine = test_run:get_cfg('engine')
+---
+...
+box.schema.user.grant('guest', 'replication')
+---
+...
+-- Deploy a replica.
+test_run:cmd("create server replica with rpl_master=default, script='replication/replica.lua'")
+---
+- true
+...
+test_run:cmd("start server replica")
+---
+- true
+...
+test_run:cmd("switch replica")
+---
+- true
+...
+replication = box.cfg.replication
+---
+...
+box.cfg{replication = {replication, replication}}
+---
+- error: 'Incorrect value for option ''replication'': duplicate connection to the
+    same replica'
+...
+test_run:cmd("switch default")
+---
+- true
+...
+box.schema.user.revoke('guest', 'replication') 
+---
+...
