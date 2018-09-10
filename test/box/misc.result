@@ -1148,6 +1148,14 @@ s = box.schema.space.create('test', {user="no_such_user"})
 ---
 - error: User 'no_such_user' is not found
 ...
+--
+-- gh-3659 assertion failure on improper call to
+-- box.schema.user:passwd()
+--
+box.schema.user:passwd()
+---
+- error: 'Usage: box.schema.user.passwd([user,] password)'
+...
 -- Too long WAL write warning (gh-2743).
 s = box.schema.space.create('test')
 ---

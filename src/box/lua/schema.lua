@@ -2025,7 +2025,7 @@ local function chpasswd(uid, new_password)
 end
 
 box.schema.user.passwd = function(name, new_password)
-    if name == nil then
+    if name == nil or type(name) == 'table' then
         box.error(box.error.PROC_LUA, "Usage: box.schema.user.passwd([user,] password)")
     end
     if new_password == nil then

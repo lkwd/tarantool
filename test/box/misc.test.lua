@@ -320,6 +320,12 @@ s:drop()
 --
 s = box.schema.space.create('test', {user="no_such_user"})
 
+--
+-- gh-3659 assertion failure on improper call to
+-- box.schema.user:passwd()
+--
+box.schema.user:passwd()
+
 -- Too long WAL write warning (gh-2743).
 s = box.schema.space.create('test')
 _ = s:create_index('pk')
