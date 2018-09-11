@@ -1,10 +1,12 @@
 #!/usr/bin/env tarantool
 test = require("sqltester")
-test:plan(8)
+test:plan(9)
 
 -- box.cfg{wal_mode='none'}
 
-table_count = 51
+table_count = 31
+
+select_string_last = ''
 
 for _, term in ipairs({'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT'}) do 
     select_string = ''
@@ -39,6 +41,8 @@ for _, term in ipairs({'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT'}) do
                  end,
                  false)
 
+    select_string_last = select_string
+
 --    if not pcall(function() box.sql.execute(select_string) end) then
 --        print('not ok')
 --    end
@@ -48,5 +52,14 @@ for _, term in ipairs({'UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT'}) do
 --        print('not ok')
 --    end
 end
+
+
+test:do_catchsql_test(
+    "gh2548-select-compound-limit-2",
+    select_string_last, {
+        -- <gh2548-select-compound-limit-2>
+        1, "Too many UNION or EXCEPT or INTERSECT operations (limit 30 is set)"
+        -- </gh2548-select-compound-limit-2>
+    })
 
 test:finish_test()

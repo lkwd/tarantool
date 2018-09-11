@@ -423,7 +423,9 @@ cmd ::= select(X).  {
         (mxSelect = pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT])>0 &&
         cnt>mxSelect
       ){
-        sqlite3ErrorMsg(pParse, "Too many UNION or EXCEPT or INTERSECT operations");
+        sqlite3ErrorMsg(pParse, "Too many UNION or EXCEPT or INTERSECT "
+                        "operations (limit %d is set)",
+                        pParse->db->aLimit[SQLITE_LIMIT_COMPOUND_SELECT]);
       }
     }
   }
