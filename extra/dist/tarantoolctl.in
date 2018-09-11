@@ -816,11 +816,14 @@ local function cat()
     for id, file in ipairs(positional_arguments) do
         log.error("Processing file '%s'", file)
         for lsn, record in xlog.pairs(file) do
-            local sid = record.BODY.space_id
+            local sid = nil
+            if record.BODY then
+                sid = record.BODY.space_id
+            end
             local rid = record.HEADER.replica_id
-            if (lsn < from) or
+            if (lsn < from) or sid == nil or
                (not spaces and sid and sid < 512 and not show_system) or
-               (spaces and (sid == nil or not find_in_list(sid, spaces))) or
+               (spaces and not find_in_list(sid, spaces)) or
                (replicas and not find_in_list(rid, replicas)) then
                 -- pass this tuple
             elseif lsn >= to then
@@ -857,11 +860,14 @@ local function play()
     for id, file in ipairs(positional_arguments) do
         log.info(("Processing file '%s'"):format(file))
         for lsn, record in xlog.pairs(file) do
-            local sid = record.BODY.space_id
+            local sid = nil
+            if record.BODY then
+                sid = record.BODY.space_id
+            end
             local rid = record.HEADER.replica_id
-            if (lsn < from) or
+            if (lsn < from) or sid == nil or
                (not spaces and sid and sid < 512 and not show_system) or
-               (spaces and (sid == nil or not find_in_list(sid, spaces))) or
+               (spaces and not find_in_list(sid, spaces)) or
                (replicas and not find_in_list(rid, replicas)) then
                 -- pass this tuple
             elseif lsn >= to then
