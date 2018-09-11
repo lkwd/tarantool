@@ -52,6 +52,7 @@
 enum {
 	SEQUENCE_HASH_SEED = 13U,
 	SEQUENCE_DATA_EXTENT_SIZE = 512,
+	SEQUENCE_ARRAY_MIN_LENGTH = 16,
 };
 
 /** Sequence state. */
@@ -178,6 +179,31 @@ sequence_update(struct sequence *seq, int64_t value)
 	return 0;
 }
 
+static inline int
+write_value_in_journal(int64_t value)
+{
+	if (fiber()->storage.generated_ids.size ==
+	    fiber()->storage.generated_ids.capacity) {
+		fiber()->storage.generated_ids.capacity =
+			fiber()->storage.generated_ids.capacity > 0 ?
+			fiber()->storage.generated_ids.capacity * 2 :
+			SEQUENCE_ARRAY_MIN_LENGTH;
+		fiber()->storage.generated_ids.array =
+			realloc(fiber()->storage.generated_ids.array,
+				fiber()->storage.generated_ids.capacity);
+		if (fiber()->storage.generated_ids.array == NULL) {
+			diag_set(OutOfMemory,
+				 fiber()->storage.generated_ids.capacity,
+				 "realloc",
+				 "fiber()->storage.generated_ids.array");
+			return -1;
+		}
+	}
+	fiber()->storage.generated_ids.array[
+		fiber()->storage.generated_ids.size++] = value;
+	return 0;
+}
+
 int
 sequence_next(struct sequence *seq, int64_t *result)
 {
@@ -194,6 +220,8 @@ sequence_next(struct sequence *seq, int64_t *result)
 					  new_data) == light_sequence_end)
 			return -1;
 		*result = def->start;
+		if (write_value_in_journal(*result) != 0)
+			return -1;
 		return 0;
 	}
 	old_data = light_sequence_get(&sequence_data_index, pos);
@@ -228,6 +256,8 @@ done:
 				   new_data, &old_data) == light_sequence_end)
 		unreachable();
 	*result = value;
+	if (write_value_in_journal(*result) != 0)
+		return -1;
 	return 0;
 overflow:
 	if (!def->cycle) {

@@ -610,6 +610,10 @@ int sqlite3VdbeExec(Vdbe *p)
 	u64 start;                 /* CPU clock count at start of opcode */
 #endif
 	struct session *user_session = current_session();
+	/* Init journal of generated ids. */
+	fiber()->storage.generated_ids.size = 0;
+	fiber()->storage.generated_ids.capacity = 0;
+	fiber()->storage.generated_ids.array = NULL;
 	/*** INSERT STACK UNION HERE ***/
 
 	assert(p->magic==VDBE_MAGIC_RUN);  /* sqlite3_step() verifies this */
@@ -5374,6 +5378,9 @@ abort_due_to_error:
 
 	/* This is the only way out of this procedure. */
 vdbe_return:
+	assert(fiber()->storage.generated_ids.array == NULL ||
+	       fiber()->storage.generated_ids.capacity > 0);
+	free(fiber()->storage.generated_ids.array);
 	testcase( nVmStep>0);
 	p->aCounter[SQLITE_STMTSTATUS_VM_STEP] += (int)nVmStep;
 	assert(rc!=SQLITE_OK || nExtraDelete==0

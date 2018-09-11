@@ -398,6 +398,11 @@ struct fiber {
 		struct session *session;
 		struct credentials *credentials;
 		struct txn *txn;
+		struct {
+			int64_t size;
+			int64_t capacity;
+			int64_t *array;
+		} generated_ids;
 		union {
 			/**
 			 * Fields used by a fiber created in Lua:
