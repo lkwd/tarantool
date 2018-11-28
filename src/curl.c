@@ -120,7 +120,6 @@ curl_multi_timer_cb(CURLM *multi, long timeout_ms, void *envp)
 	struct curl_env *env = (struct curl_env *) envp;
 
 	say_debug("curl %p: wait timeout=%ldms", env, timeout_ms);
-	ev_timer_stop(loop(), &env->timer_event);
 	if (timeout_ms > 0) {
 		/*
 		 * From CURLMOPT_TIMERFUNCTION manual:
@@ -128,9 +127,9 @@ curl_multi_timer_cb(CURLM *multi, long timeout_ms, void *envp)
 		 * with an interval of timeout_ms. Each time that timer fires,
 		 * call curl_multi_socket_action().
 		 */
-		double timeout = (double) timeout_ms / 1000.0;
-		ev_timer_init(&env->timer_event, curl_timer_cb, timeout, 0);
-		ev_timer_start(loop(), &env->timer_event);
+		env->timer_event.repeat = (double) timeout_ms / 1000.0;
+		ev_timer_again(loop(), &env->timer_event);
+		env->timer_event.repeat = 0;
 		return 0;
 	} else if (timeout_ms == 0) {
 		/*
@@ -138,10 +137,19 @@ curl_multi_timer_cb(CURLM *multi, long timeout_ms, void *envp)
 		 * A timeout_ms value of 0 means you should call
 		 * curl_multi_socket_action or curl_multi_perform (once) as
 		 * soon as possible.
+		 *
+		 * libcurl's docs include an example of using libcurl with libev in
+		 * which it is shown that we can call curl_multi_socket_action()
+		 * directly from the timer callback. But this can cause infinite
+		 * recursion.  So we just restart the timer here and the call to
+		 * curl_multi_socket_action() happens back in the main event loop.
 		 */
-		curl_timer_cb(loop(), &env->timer_event, 0);
+		ev_timer_stop(loop(), &env->timer_event);
+		ev_timer_set(&env->timer_event, 0, 0);
+		ev_timer_start(loop(), &env->timer_event);
 		return 0;
 	} else {
+		ev_timer_stop(loop(), &env->timer_event);
 		assert(timeout_ms == -1);
 		/*
 		 * From CURLMOPT_TIMERFUNCTION manual:
@@ -241,8 +249,9 @@ curl_env_create(struct curl_env *env, long max_conns)
 		goto error_exit;
 	}
 
-	ev_init(&env->timer_event, curl_timer_cb);
+	ev_timer_init(&env->timer_event, curl_timer_cb, 0, 0);
 	env->timer_event.data = (void *) env;
+
 	curl_multi_setopt(env->multi, CURLMOPT_TIMERFUNCTION,
 			  curl_multi_timer_cb);
 	curl_multi_setopt(env->multi, CURLMOPT_TIMERDATA, (void *) env);
