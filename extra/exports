@@ -273,7 +273,9 @@ lua_equal
 lua_rawequal
 lua_lessthan
 lua_tonumber
+lua_tonumberx
 lua_tointeger
+lua_tointegerx
 lua_toboolean
 lua_tolstring
 lua_objlen
